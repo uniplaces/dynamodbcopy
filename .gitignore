@@ -13,3 +13,6 @@
 
 # ide ignores
 .idea/
+
+# don't commit vendors
+vendor/

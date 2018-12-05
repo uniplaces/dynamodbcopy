@@ -1,15 +1,21 @@
 language: go
+
 sudo: false
 
 go:
-  - 1.11
-
-before_script:
-  - go get github.com/golangci/golangci-lint/cmd/golangci-lint
+  - "1.11.x"
 
 script:
   - golangci-lint run
   - go test -v -coverprofile=coverage.txt -covermode=atomic -race ./...
+
+install: true
+
+env:
+  - GO111MODULE=on
+
+before_script:
+  - go get github.com/golangci/golangci-lint/cmd/golangci-lint
 
 after_success:
   - bash <(curl -s https://codecov.io/bash)
