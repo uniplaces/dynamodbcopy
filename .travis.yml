@@ -6,7 +6,7 @@ go:
   - "1.11.x"
 
 script:
-  - golangci-lint run
+  - golangci-lint run -E golint -E goimports -E interfacer
   - go test -v -coverprofile=coverage.txt -covermode=atomic -race ./...
 
 install: true
