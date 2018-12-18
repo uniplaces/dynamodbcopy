@@ -24,7 +24,7 @@ func TestRun_FetchProvisioningError(t *testing.T) {
 		Return(dynamodbcopy.TablesDescription{}, expectedError).
 		Once()
 
-	err := copytable.Run(service)
+	err := copytable.RunCopyTable(service)
 
 	require.NotNil(t, err)
 	assert.Equal(t, expectedError, err)
@@ -54,7 +54,7 @@ func TestRun_UpdateProvisioningError(t *testing.T) {
 		Return(expectedError).
 		Once()
 
-	err := copytable.Run(service)
+	err := copytable.RunCopyTable(service)
 
 	require.NotNil(t, err)
 	assert.Equal(t, expectedError, err)
@@ -89,7 +89,7 @@ func TestRun_CopyError(t *testing.T) {
 		Return(expectedError).
 		Once()
 
-	err := copytable.Run(service)
+	err := copytable.RunCopyTable(service)
 
 	require.NotNil(t, err)
 	assert.Equal(t, expectedError, err)
@@ -129,7 +129,7 @@ func TestRun_UpdateProvisioningEndError(t *testing.T) {
 		Return(expectedError).
 		Once()
 
-	err := copytable.Run(service)
+	err := copytable.RunCopyTable(service)
 
 	require.NotNil(t, err)
 	assert.Equal(t, expectedError, err)
@@ -163,7 +163,7 @@ func TestRun_Copy(t *testing.T) {
 		Return(nil).
 		Once()
 
-	err := copytable.Run(service)
+	err := copytable.RunCopyTable(service)
 
 	require.Nil(t, err)
 

@@ -1,22 +1,28 @@
 package dynamodbcopy
 
 import (
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
 )
 
+// DynamoDBAPI just a wrapper over aws-sdk dynamodbiface.DynamoDBAPI interface for mocking purposes
+type DynamoDBAPI interface {
+	dynamodbiface.DynamoDBAPI
+}
+
 type DynamoDBService interface {
-	DescribeTable() (*dynamodb.DescribeTableOutput, error)
+	DescribeTable() (*dynamodb.TableDescription, error)
 	UpdateCapacity(read, write int64) error
 }
 
 type dynamoDB struct {
 	tableName string
-	profile   string
-	api       *dynamodb.DynamoDB
+	api       DynamoDBAPI
 }
 
-func NewDynamoDB(tableName string, profile string) DynamoDBService {
+func NewDynamoDBAPI(profile string) DynamoDBAPI {
 	options := session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}
@@ -25,19 +31,30 @@ func NewDynamoDB(tableName string, profile string) DynamoDBService {
 		options.Profile = profile
 	}
 
-	api := dynamodb.New(
+	return dynamodb.New(
 		session.Must(
 			session.NewSessionWithOptions(
 				options,
 			),
 		),
 	)
-
-	return dynamoDB{tableName, profile, api}
 }
 
-func (db dynamoDB) DescribeTable() (*dynamodb.DescribeTableOutput, error) {
-	return nil, nil
+func NewDynamoDBService(tableName string, api DynamoDBAPI) DynamoDBService {
+	return dynamoDB{tableName, api}
+}
+
+func (db dynamoDB) DescribeTable() (*dynamodb.TableDescription, error) {
+	input := &dynamodb.DescribeTableInput{
+		TableName: aws.String(db.tableName),
+	}
+
+	output, err := db.api.DescribeTable(input)
+	if err != nil {
+		return nil, err
+	}
+
+	return output.Table, nil
 }
 
 func (db dynamoDB) UpdateCapacity(read, write int64) error {

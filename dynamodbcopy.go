@@ -2,7 +2,6 @@ package dynamodbcopy
 
 import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/spf13/viper"
 )
 
 type TablesDescription struct {
@@ -23,21 +22,26 @@ type dynamodbCopy struct {
 	trgTable DynamoDBService
 }
 
-func NewDynamoDBCopy(config viper.Viper) (DynamoDBCopy, error) {
-	copyConfig, err := NewConfig(config)
-	if err != nil {
-		return nil, err
-	}
-
+func NewDynamoDBCopy(copyConfig Config, srcTableService, trgTableService DynamoDBService) (DynamoDBCopy, error) {
 	return dynamodbCopy{
 		config:   copyConfig,
-		srcTable: NewDynamoDB(copyConfig.SourceTable, copyConfig.SourceProfile),
-		trgTable: NewDynamoDB(copyConfig.TargetTable, copyConfig.TargetProfile),
+		srcTable: srcTableService,
+		trgTable: trgTableService,
 	}, nil
 }
 
 func (dc dynamodbCopy) FetchProvisioning() (TablesDescription, error) {
-	return TablesDescription{}, nil
+	srcDescription, err := dc.srcTable.DescribeTable()
+	if err != nil {
+		return TablesDescription{}, err
+	}
+
+	trgDescription, err := dc.trgTable.DescribeTable()
+	if err != nil {
+		return TablesDescription{}, err
+	}
+
+	return TablesDescription{Source: *srcDescription, Target: *trgDescription}, nil
 }
 
 func (dc dynamodbCopy) CalculateCopyProvisioning(descriptions TablesDescription) TablesDescription {
