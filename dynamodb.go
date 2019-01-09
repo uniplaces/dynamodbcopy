@@ -1,6 +1,8 @@
 package dynamodbcopy
 
 import (
+	"fmt"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -14,12 +16,14 @@ type DynamoDBAPI interface {
 
 type DynamoDBService interface {
 	DescribeTable() (*dynamodb.TableDescription, error)
-	UpdateCapacity(read, write int64) error
+	UpdateCapacity(capacity Capacity) error
+	WaitForReadyTable() error
 }
 
-type dynamoDB struct {
+type dynamoDBSerivce struct {
 	tableName string
 	api       DynamoDBAPI
+	sleep     Sleeper
 }
 
 func NewDynamoDBAPI(profile string) DynamoDBAPI {
@@ -40,11 +44,11 @@ func NewDynamoDBAPI(profile string) DynamoDBAPI {
 	)
 }
 
-func NewDynamoDBService(tableName string, api DynamoDBAPI) DynamoDBService {
-	return dynamoDB{tableName, api}
+func NewDynamoDBService(tableName string, api DynamoDBAPI, sleepFn Sleeper) DynamoDBService {
+	return dynamoDBSerivce{tableName, api, sleepFn}
 }
 
-func (db dynamoDB) DescribeTable() (*dynamodb.TableDescription, error) {
+func (db dynamoDBSerivce) DescribeTable() (*dynamodb.TableDescription, error) {
 	input := &dynamodb.DescribeTableInput{
 		TableName: aws.String(db.tableName),
 	}
@@ -57,6 +61,49 @@ func (db dynamoDB) DescribeTable() (*dynamodb.TableDescription, error) {
 	return output.Table, nil
 }
 
-func (db dynamoDB) UpdateCapacity(read, write int64) error {
+func (db dynamoDBSerivce) UpdateCapacity(capacity Capacity) error {
+	read := capacity.Read
+	write := capacity.Write
+
+	if read == 0 || write == 0 {
+		return fmt.Errorf(
+			"invalid update capacity read %d & write %d: capacity units must be greater than 0",
+			read,
+			write,
+		)
+	}
+
+	input := &dynamodb.UpdateTableInput{
+		TableName: aws.String(db.tableName),
+		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+			ReadCapacityUnits:  aws.Int64(read),
+			WriteCapacityUnits: aws.Int64(write),
+		},
+	}
+
+	_, err := db.api.UpdateTable(input)
+	if err != nil {
+		return err
+	}
+
+	return db.WaitForReadyTable()
+}
+
+func (db dynamoDBSerivce) WaitForReadyTable() error {
+	elapsed := 0
+
+	for attempt := 0; ; attempt++ {
+		description, err := db.DescribeTable()
+		if err != nil {
+			return err
+		}
+
+		if *description.TableStatus == dynamodb.TableStatusActive {
+			break
+		}
+
+		elapsed += db.sleep(elapsed * attempt)
+	}
+
 	return nil
 }

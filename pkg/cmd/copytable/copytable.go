@@ -33,12 +33,12 @@ func New(config *viper.Viper) *cobra.Command {
 			config.SetDefault("source-table", args[0])
 			config.SetDefault("target-table", args[1])
 
-			service, err := wireDependencies(config)
+			deps, err := wireDependencies(config)
 			if err != nil {
 				log.Fatalf("%s error: %s", cmdName, err)
 			}
 
-			if err := RunCopyTable(service); err != nil {
+			if err := RunCopyTable(deps); err != nil {
 				log.Fatalf("%s error: %s", cmdName, err)
 			}
 		},
@@ -51,22 +51,32 @@ func New(config *viper.Viper) *cobra.Command {
 	return cmd
 }
 
-func wireDependencies(config *viper.Viper) (dynamodbcopy.DynamoDBCopy, error) {
+type Deps struct {
+	Copier      dynamodbcopy.Copier
+	Provisioner dynamodbcopy.Provisioner
+}
+
+func wireDependencies(config *viper.Viper) (Deps, error) {
 	copyConfig, err := dynamodbcopy.NewConfig(*config)
 	if err != nil {
-		return nil, err
+		return Deps{}, err
 	}
 
 	srcTableService := dynamodbcopy.NewDynamoDBService(
 		config.GetString(srcTableKey),
 		dynamodbcopy.NewDynamoDBAPI(config.GetString(srcProfileKey)),
+		dynamodbcopy.RandomSleeper,
 	)
 	trgTableService := dynamodbcopy.NewDynamoDBService(
 		config.GetString(trgTableKey),
 		dynamodbcopy.NewDynamoDBAPI(config.GetString(trgProfileKey)),
+		dynamodbcopy.RandomSleeper,
 	)
 
-	return dynamodbcopy.NewDynamoDBCopy(copyConfig, srcTableService, trgTableService)
+	return Deps{
+		Copier:      dynamodbcopy.NewCopier(copyConfig, srcTableService, trgTableService),
+		Provisioner: dynamodbcopy.NewProvisioner(srcTableService, trgTableService),
+	}, nil
 }
 
 func SetAndBindFlags(flagSet *pflag.FlagSet, config *viper.Viper) error {
@@ -78,20 +88,23 @@ func SetAndBindFlags(flagSet *pflag.FlagSet, config *viper.Viper) error {
 	return config.BindPFlags(flagSet)
 }
 
-func RunCopyTable(service dynamodbcopy.DynamoDBCopy) error {
-	initialProvision, err := service.FetchProvisioning()
+func RunCopyTable(deps Deps) error {
+	initialProvisioning, err := deps.Provisioner.Fetch()
 	if err != nil {
 		return err
 	}
 
-	copyProvision := service.CalculateCopyProvisioning(initialProvision)
-	if err := service.UpdateProvisioning(copyProvision); err != nil {
+	if _, err = deps.Provisioner.Update(initialProvisioning); err != nil {
 		return err
 	}
 
-	if err := service.Copy(); err != nil {
+	if err := deps.Copier.Copy(); err != nil {
 		return err
 	}
 
-	return service.UpdateProvisioning(initialProvision)
+	if _, err := deps.Provisioner.Update(initialProvisioning); err != nil {
+		return err
+	}
+
+	return nil
 }
