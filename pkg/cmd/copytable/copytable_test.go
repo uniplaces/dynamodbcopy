@@ -173,9 +173,11 @@ func TestSetAndBindFlags_Default(t *testing.T) {
 
 	require.Nil(t, err)
 
-	assert.Equal(t, 4, len(config.AllSettings()))
+	assert.Equal(t, 6, len(config.AllSettings()))
 	assert.Equal(t, "", config.GetString("source-profile"))
 	assert.Equal(t, "", config.GetString("target-profile"))
-	assert.Equal(t, 0, config.GetInt("read-units"))
-	assert.Equal(t, 0, config.GetInt("write-units"))
+	assert.Equal(t, 0, config.GetInt("read-capacity"))
+	assert.Equal(t, 0, config.GetInt("write-capacity"))
+	assert.Equal(t, 1, config.GetInt("reader-count"))
+	assert.Equal(t, 1, config.GetInt("writer-count"))
 }

@@ -10,6 +10,20 @@ type DynamoDBService struct {
 	mock.Mock
 }
 
+// BatchWrite provides a mock function with given fields: items
+func (_m *DynamoDBService) BatchWrite(items []dynamodbcopy.DynamoDBItem) error {
+	ret := _m.Called(items)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func([]dynamodbcopy.DynamoDBItem) error); ok {
+		r0 = rf(items)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // DescribeTable provides a mock function with given fields:
 func (_m *DynamoDBService) DescribeTable() (*dynamodb.TableDescription, error) {
 	ret := _m.Called()
@@ -26,6 +40,29 @@ func (_m *DynamoDBService) DescribeTable() (*dynamodb.TableDescription, error) {
 	var r1 error
 	if rf, ok := ret.Get(1).(func() error); ok {
 		r1 = rf()
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Scan provides a mock function with given fields: totalSegments, segment
+func (_m *DynamoDBService) Scan(totalSegments int, segment int) ([]dynamodbcopy.DynamoDBItem, error) {
+	ret := _m.Called(totalSegments, segment)
+
+	var r0 []dynamodbcopy.DynamoDBItem
+	if rf, ok := ret.Get(0).(func(int, int) []dynamodbcopy.DynamoDBItem); ok {
+		r0 = rf(totalSegments, segment)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]dynamodbcopy.DynamoDBItem)
+		}
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(int, int) error); ok {
+		r1 = rf(totalSegments, segment)
 	} else {
 		r1 = ret.Error(1)
 	}

@@ -1,6 +1,7 @@
 package dynamodbcopy
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -9,15 +10,21 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
 )
 
+const maxBatchWriteSize = 25
+
 // DynamoDBAPI just a wrapper over aws-sdk dynamodbiface.DynamoDBAPI interface for mocking purposes
 type DynamoDBAPI interface {
 	dynamodbiface.DynamoDBAPI
 }
 
+type DynamoDBItem map[string]*dynamodb.AttributeValue
+
 type DynamoDBService interface {
 	DescribeTable() (*dynamodb.TableDescription, error)
 	UpdateCapacity(capacity Capacity) error
 	WaitForReadyTable() error
+	BatchWrite(items []DynamoDBItem) error
+	Scan(totalSegments, segment int) ([]DynamoDBItem, error)
 }
 
 type dynamoDBSerivce struct {
@@ -67,7 +74,7 @@ func (db dynamoDBSerivce) UpdateCapacity(capacity Capacity) error {
 
 	if read == 0 || write == 0 {
 		return fmt.Errorf(
-			"invalid update capacity read %d & write %d: capacity units must be greater than 0",
+			"invalid update capacity read %d, write %d: capacity units must be greater than 0",
 			read,
 			write,
 		)
@@ -89,6 +96,54 @@ func (db dynamoDBSerivce) UpdateCapacity(capacity Capacity) error {
 	return db.WaitForReadyTable()
 }
 
+func (db dynamoDBSerivce) BatchWrite(items []DynamoDBItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	var remainingRequests []*dynamodb.WriteRequest
+	for _, item := range items {
+		if len(remainingRequests) == maxBatchWriteSize {
+			if err := db.batchWriteItem(remainingRequests); err != nil {
+				return err
+			}
+
+			remainingRequests = nil
+		}
+
+		request := &dynamodb.WriteRequest{
+			PutRequest: &dynamodb.PutRequest{
+				Item: item,
+			},
+		}
+		remainingRequests = append(remainingRequests, request)
+	}
+
+	return db.batchWriteItem(remainingRequests)
+}
+
+func (db dynamoDBSerivce) batchWriteItem(requests []*dynamodb.WriteRequest) error {
+	tableName := db.tableName
+
+	writeRequests := requests
+	for len(writeRequests) != 0 {
+		batchInput := &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]*dynamodb.WriteRequest{
+				tableName: writeRequests,
+			},
+		}
+
+		output, err := db.api.BatchWriteItem(batchInput)
+		if err != nil {
+			return err
+		}
+
+		writeRequests = output.UnprocessedItems[tableName]
+	}
+
+	return nil
+}
+
 func (db dynamoDBSerivce) WaitForReadyTable() error {
 	elapsed := 0
 
@@ -106,4 +161,34 @@ func (db dynamoDBSerivce) WaitForReadyTable() error {
 	}
 
 	return nil
+}
+
+func (db dynamoDBSerivce) Scan(totalSegments, segment int) ([]DynamoDBItem, error) {
+	if totalSegments == 0 {
+		return nil, errors.New("totalSegments has to be greater than 0")
+	}
+
+	input := dynamodb.ScanInput{
+		TableName: aws.String(db.tableName),
+	}
+
+	if totalSegments > 1 {
+		input.SetSegment(int64(segment))
+		input.SetTotalSegments(int64(totalSegments))
+	}
+
+	var items []DynamoDBItem
+	pagerFn := func(output *dynamodb.ScanOutput, b bool) bool {
+		for _, item := range output.Items {
+			items = append(items, item)
+		}
+
+		return !b
+	}
+
+	if err := db.api.ScanPages(&input, pagerFn); err != nil {
+		return nil, err
+	}
+
+	return items, nil
 }

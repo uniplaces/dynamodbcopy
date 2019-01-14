@@ -16,12 +16,14 @@ const (
 )
 
 const (
-	srcTableKey   = "source-table"
-	trgTableKey   = "target-table"
-	srcProfileKey = "source-profile"
-	trgProfileKey = "target-profile"
-	readUnitsKey  = "read-units"
-	writeUnitsKey = "write-units"
+	srcTableKey      = "source-table"
+	trgTableKey      = "target-table"
+	srcProfileKey    = "source-profile"
+	trgProfileKey    = "target-profile"
+	readCapacityKey  = "read-capacity"
+	writeCapacityKey = "write-capacity"
+	readerCountKey   = "reader-count"
+	writerCountKey   = "writer-count"
 )
 
 func New(config *viper.Viper) *cobra.Command {
@@ -30,8 +32,8 @@ func New(config *viper.Viper) *cobra.Command {
 		Short: shortDescription,
 		Args:  cobra.ExactArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
-			config.SetDefault("source-table", args[0])
-			config.SetDefault("target-table", args[1])
+			config.SetDefault(srcTableKey, args[0])
+			config.SetDefault(trgTableKey, args[1])
 
 			deps, err := wireDependencies(config)
 			if err != nil {
@@ -57,11 +59,6 @@ type Deps struct {
 }
 
 func wireDependencies(config *viper.Viper) (Deps, error) {
-	copyConfig, err := dynamodbcopy.NewConfig(*config)
-	if err != nil {
-		return Deps{}, err
-	}
-
 	srcTableService := dynamodbcopy.NewDynamoDBService(
 		config.GetString(srcTableKey),
 		dynamodbcopy.NewDynamoDBAPI(config.GetString(srcProfileKey)),
@@ -73,17 +70,24 @@ func wireDependencies(config *viper.Viper) (Deps, error) {
 		dynamodbcopy.RandomSleeper,
 	)
 
-	return Deps{
-		Copier:      dynamodbcopy.NewCopier(copyConfig, srcTableService, trgTableService),
-		Provisioner: dynamodbcopy.NewProvisioner(srcTableService, trgTableService),
-	}, nil
+	copier := dynamodbcopy.NewCopier(
+		srcTableService,
+		trgTableService,
+		config.GetInt(readerCountKey),
+		config.GetInt(writerCountKey),
+	)
+	provisioner := dynamodbcopy.NewProvisioner(srcTableService, trgTableService)
+
+	return Deps{Copier: copier, Provisioner: provisioner}, nil
 }
 
 func SetAndBindFlags(flagSet *pflag.FlagSet, config *viper.Viper) error {
 	flagSet.StringP(srcProfileKey, "s", "", "Set the profile to use for the source table")
 	flagSet.StringP(trgProfileKey, "t", "", "Set the profile to use for the target table")
-	flagSet.IntP(readUnitsKey, "r", 0, "Set the read provisioned capacity for the source table")
-	flagSet.IntP(writeUnitsKey, "w", 0, "Set the write provisioned capacity for the target table")
+	flagSet.Int(readCapacityKey, 0, "Set the read provisioned capacity for the source table")
+	flagSet.Int(writeCapacityKey, 0, "Set the write provisioned capacity for the target table")
+	flagSet.IntP(readerCountKey, "r", 1, "Set the number of read workers to use")
+	flagSet.IntP(writerCountKey, "w", 1, "Set the number of write workers to use")
 
 	return config.BindPFlags(flagSet)
 }
