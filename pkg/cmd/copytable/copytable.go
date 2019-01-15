@@ -56,6 +56,7 @@ func New(config *viper.Viper) *cobra.Command {
 type Deps struct {
 	Copier      dynamodbcopy.Copier
 	Provisioner dynamodbcopy.Provisioner
+	Config      dynamodbcopy.Config
 }
 
 func wireDependencies(config *viper.Viper) (Deps, error) {
@@ -73,12 +74,22 @@ func wireDependencies(config *viper.Viper) (Deps, error) {
 	copier := dynamodbcopy.NewCopier(
 		srcTableService,
 		trgTableService,
-		config.GetInt(readerCountKey),
-		config.GetInt(writerCountKey),
 	)
-	provisioner := dynamodbcopy.NewProvisioner(srcTableService, trgTableService)
+	provisioner := dynamodbcopy.NewProvisioner(
+		srcTableService,
+		trgTableService,
+	)
 
-	return Deps{Copier: copier, Provisioner: provisioner}, nil
+	return Deps{
+		Copier:      copier,
+		Provisioner: provisioner,
+		Config: dynamodbcopy.NewConfig(
+			config.GetInt(readCapacityKey),
+			config.GetInt(writeCapacityKey),
+			config.GetInt(readerCountKey),
+			config.GetInt(writerCountKey),
+		),
+	}, nil
 }
 
 func SetAndBindFlags(flagSet *pflag.FlagSet, config *viper.Viper) error {
@@ -98,11 +109,12 @@ func RunCopyTable(deps Deps) error {
 		return err
 	}
 
-	if _, err = deps.Provisioner.Update(initialProvisioning); err != nil {
+	updateProvisioning := deps.Config.Provisioning(initialProvisioning)
+	if _, err = deps.Provisioner.Update(updateProvisioning); err != nil {
 		return err
 	}
 
-	if err := deps.Copier.Copy(); err != nil {
+	if err := deps.Copier.Copy(deps.Config.Workers()); err != nil {
 		return err
 	}
 

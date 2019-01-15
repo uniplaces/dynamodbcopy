@@ -3,41 +3,37 @@ package dynamodbcopy
 import "sync"
 
 type Copier interface {
-	Copy() error
+	Copy(readers, writers int) error
 }
 
 type copyService struct {
-	srcTable     DynamoDBService
-	trgTable     DynamoDBService
-	totalReaders int
-	totalWriters int
+	srcTable DynamoDBService
+	trgTable DynamoDBService
 }
 
-func NewCopier(srcTableService, trgTableService DynamoDBService, totalReaders, totalWriters int) Copier {
+func NewCopier(srcTableService, trgTableService DynamoDBService) Copier {
 	return copyService{
-		srcTable:     srcTableService,
-		trgTable:     trgTableService,
-		totalReaders: totalReaders,
-		totalWriters: totalWriters,
+		srcTable: srcTableService,
+		trgTable: trgTableService,
 	}
 }
 
-func (copyService copyService) Copy() error {
+func (service copyService) Copy(readers, writers int) error {
 	errChan := make(chan error)
 	itemsChan := make(chan []DynamoDBItem)
 
 	wgReaders := &sync.WaitGroup{}
-	wgReaders.Add(copyService.totalReaders)
+	wgReaders.Add(readers)
 
 	wgWriters := &sync.WaitGroup{}
-	wgWriters.Add(copyService.totalWriters)
+	wgWriters.Add(writers)
 
-	for i := 0; i < copyService.totalReaders; i++ {
-		go copyService.read(i, wgReaders, itemsChan, errChan)
+	for i := 0; i < readers; i++ {
+		go service.read(i, readers, wgReaders, itemsChan, errChan)
 	}
 
-	for i := 0; i < copyService.totalWriters; i++ {
-		go copyService.write(wgWriters, itemsChan, errChan)
+	for i := 0; i < writers; i++ {
+		go service.write(wgWriters, itemsChan, errChan)
 	}
 
 	go func() {
@@ -50,10 +46,16 @@ func (copyService copyService) Copy() error {
 	return <-errChan
 }
 
-func (copyService copyService) read(id int, wg *sync.WaitGroup, itemsChan chan<- []DynamoDBItem, errChan chan<- error) {
+func (service copyService) read(
+	readerID int,
+	totalReaders int,
+	wg *sync.WaitGroup,
+	itemsChan chan<- []DynamoDBItem,
+	errChan chan<- error,
+) {
 	defer wg.Done()
 
-	items, err := copyService.srcTable.Scan(copyService.totalReaders, id)
+	items, err := service.srcTable.Scan(totalReaders, readerID)
 	if err != nil {
 		errChan <- err
 
@@ -63,10 +65,10 @@ func (copyService copyService) read(id int, wg *sync.WaitGroup, itemsChan chan<-
 	itemsChan <- items
 }
 
-func (copyService copyService) write(wg *sync.WaitGroup, itemsChan <-chan []DynamoDBItem, errChan chan<- error) {
+func (service copyService) write(wg *sync.WaitGroup, itemsChan <-chan []DynamoDBItem, errChan chan<- error) {
 	defer wg.Done()
 
-	if err := copyService.trgTable.BatchWrite(<-itemsChan); err != nil {
+	if err := service.trgTable.BatchWrite(<-itemsChan); err != nil {
 		errChan <- err
 	}
 }

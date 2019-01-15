@@ -30,7 +30,7 @@ func (dc provisioningService) Fetch() (Provisioning, error) {
 		return Provisioning{}, err
 	}
 
-	return Provisioning{*srcDescription, *trgDescription}, nil
+	return NewProvisioning(srcDescription, trgDescription), nil
 }
 
 func (dc provisioningService) Update(provisioning Provisioning) (Provisioning, error) {
@@ -39,14 +39,14 @@ func (dc provisioningService) Update(provisioning Provisioning) (Provisioning, e
 		return Provisioning{}, err
 	}
 
-	if needsProvisioningUpdate(currentProvisioning.SourceCapacity(), provisioning.SourceCapacity()) {
-		if err := dc.srcTable.UpdateCapacity(provisioning.SourceCapacity()); err != nil {
+	if needsProvisioningUpdate(currentProvisioning.Source, provisioning.Source) {
+		if err := dc.srcTable.UpdateCapacity(*provisioning.Source); err != nil {
 			return Provisioning{}, err
 		}
 	}
 
-	if needsProvisioningUpdate(currentProvisioning.TargetCapacity(), provisioning.TargetCapacity()) {
-		if err := dc.trgTable.UpdateCapacity(provisioning.TargetCapacity()); err != nil {
+	if needsProvisioningUpdate(currentProvisioning.Target, provisioning.Target) {
+		if err := dc.trgTable.UpdateCapacity(*provisioning.Target); err != nil {
 			return Provisioning{}, err
 		}
 	}
@@ -54,13 +54,8 @@ func (dc provisioningService) Update(provisioning Provisioning) (Provisioning, e
 	return provisioning, nil
 }
 
-func needsProvisioningUpdate(c1, c2 Capacity) bool {
-	return c1.Read != c2.Read || c1.Write != c2.Write
-}
-
-type Provisioning struct {
-	Source dynamodb.TableDescription
-	Target dynamodb.TableDescription
+func needsProvisioningUpdate(c1, c2 *Capacity) bool {
+	return c1 != nil && c2 != nil && (c1.Read != c2.Read || c1.Write != c2.Write)
 }
 
 type Capacity struct {
@@ -68,16 +63,27 @@ type Capacity struct {
 	Write int64
 }
 
-func (p Provisioning) SourceCapacity() Capacity {
-	return Capacity{
-		Write: *p.Source.ProvisionedThroughput.WriteCapacityUnits,
-		Read:  *p.Source.ProvisionedThroughput.ReadCapacityUnits,
-	}
+type Provisioning struct {
+	Source *Capacity
+	Target *Capacity
 }
 
-func (p Provisioning) TargetCapacity() Capacity {
-	return Capacity{
-		Write: *p.Target.ProvisionedThroughput.WriteCapacityUnits,
-		Read:  *p.Target.ProvisionedThroughput.ReadCapacityUnits,
+func NewProvisioning(srcDescription, trgDescription *dynamodb.TableDescription) Provisioning {
+	provisioning := Provisioning{}
+
+	if *srcDescription.BillingModeSummary.BillingMode == dynamodb.BillingModeProvisioned {
+		provisioning.Source = &Capacity{
+			Write: *srcDescription.ProvisionedThroughput.WriteCapacityUnits,
+			Read:  *srcDescription.ProvisionedThroughput.ReadCapacityUnits,
+		}
 	}
+
+	if *trgDescription.BillingModeSummary.BillingMode == dynamodb.BillingModeProvisioned {
+		provisioning.Target = &Capacity{
+			Write: *trgDescription.ProvisionedThroughput.WriteCapacityUnits,
+			Read:  *trgDescription.ProvisionedThroughput.ReadCapacityUnits,
+		}
+	}
+
+	return provisioning
 }

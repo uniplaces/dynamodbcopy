@@ -85,9 +85,9 @@ func TestCopy(t *testing.T) {
 
 				testCase.mocker(src, trg)
 
-				service := dynamodbcopy.NewCopier(src, trg, testCase.totalReaders, testCase.totalWriters)
+				service := dynamodbcopy.NewCopier(src, trg)
 
-				err := service.Copy()
+				err := service.Copy(testCase.totalReaders, testCase.totalWriters)
 
 				assert.Equal(t, testCase.expectedError, err)
 

@@ -8,13 +8,13 @@ type Copier struct {
 	mock.Mock
 }
 
-// Copy provides a mock function with given fields:
-func (_m *Copier) Copy() error {
-	ret := _m.Called()
+// Copy provides a mock function with given fields: readers, writers
+func (_m *Copier) Copy(readers int, writers int) error {
+	ret := _m.Called(readers, writers)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func() error); ok {
-		r0 = rf()
+	if rf, ok := ret.Get(0).(func(int, int) error); ok {
+		r0 = rf(readers, writers)
 	} else {
 		r0 = ret.Error(0)
 	}
