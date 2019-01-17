@@ -2,7 +2,6 @@ package copytable
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -26,40 +25,84 @@ const (
 	writerCountKey   = "writer-count"
 )
 
-func New(config *viper.Viper) *cobra.Command {
+func New() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   fmt.Sprintf("%s <source-table> <target-table>", cmdName),
 		Short: shortDescription,
 		Args:  cobra.ExactArgs(2),
-		Run: func(cmd *cobra.Command, args []string) {
-			config.SetDefault(srcTableKey, args[0])
-			config.SetDefault(trgTableKey, args[1])
-
-			deps, err := wireDependencies(config)
-			if err != nil {
-				log.Fatalf("%s error: %s", cmdName, err)
-			}
-
-			if err := RunCopyTable(deps); err != nil {
-				log.Fatalf("%s error: %s", cmdName, err)
-			}
-		},
+		RunE:  runHandler,
 	}
 
-	if err := SetAndBindFlags(cmd.Flags(), config); err != nil {
-		panic(err)
-	}
+	bindFlags(cmd.Flags())
 
 	return cmd
 }
 
-type Deps struct {
+func bindFlags(flagSet *pflag.FlagSet) {
+	flagSet.StringP(srcProfileKey, "s", "", "Set the profile to use for the source table")
+	flagSet.StringP(trgProfileKey, "t", "", "Set the profile to use for the target table")
+	flagSet.Int(readCapacityKey, 0, "Set the read provisioned capacity for the source table")
+	flagSet.Int(writeCapacityKey, 0, "Set the write provisioned capacity for the target table")
+	flagSet.IntP(readerCountKey, "r", 1, "Set the number of read workers to use")
+	flagSet.IntP(writerCountKey, "w", 1, "Set the number of write workers to use")
+}
+
+func runHandler(cmd *cobra.Command, args []string) error {
+	deps, err := setupDependencies(cmd, args)
+	if err != nil {
+		return handleError("error setting up dependencies", err)
+	}
+
+	return run(deps)
+}
+
+func run(deps dependencies) error {
+	initialProvisioning, err := deps.Provisioner.Fetch()
+	if err != nil {
+		return handleError("error fetching initial provisioning", err)
+	}
+
+	updateProvisioning := deps.Config.Provisioning(initialProvisioning)
+	if _, err := deps.Provisioner.Update(updateProvisioning); err != nil {
+		return handleError("error setting up provisioning before copy", err)
+	}
+
+	if err := deps.Copier.Copy(deps.Config.Workers()); err != nil {
+		copyErr := handleError("error copying records", err)
+		if _, provisionErr := deps.Provisioner.Update(initialProvisioning); provisionErr != nil {
+			return handleError(copyErr.Error(), provisionErr)
+		}
+
+		return copyErr
+	}
+
+	if _, err := deps.Provisioner.Update(initialProvisioning); err != nil {
+		return handleError("error restoring initial provisioning", err)
+	}
+
+	return nil
+}
+
+func handleError(msg string, err error) error {
+	return fmt.Errorf("[%s] %s\n%s", cmdName, msg, err)
+}
+
+type dependencies struct {
 	Copier      dynamodbcopy.Copier
 	Provisioner dynamodbcopy.Provisioner
 	Config      dynamodbcopy.Config
 }
 
-func wireDependencies(config *viper.Viper) (Deps, error) {
+func setupDependencies(cmd *cobra.Command, args []string) (dependencies, error) {
+	config := viper.New()
+
+	config.SetDefault(srcTableKey, args[0])
+	config.SetDefault(trgTableKey, args[1])
+
+	if err := config.BindPFlags(cmd.Flags()); err != nil {
+		return dependencies{}, err
+	}
+
 	srcTableService := dynamodbcopy.NewDynamoDBService(
 		config.GetString(srcTableKey),
 		dynamodbcopy.NewDynamoDBAPI(config.GetString(srcProfileKey)),
@@ -71,16 +114,10 @@ func wireDependencies(config *viper.Viper) (Deps, error) {
 		dynamodbcopy.RandomSleeper,
 	)
 
-	copier := dynamodbcopy.NewCopier(
-		srcTableService,
-		trgTableService,
-	)
-	provisioner := dynamodbcopy.NewProvisioner(
-		srcTableService,
-		trgTableService,
-	)
+	copier := dynamodbcopy.NewCopier(srcTableService, trgTableService)
+	provisioner := dynamodbcopy.NewProvisioner(srcTableService, trgTableService)
 
-	return Deps{
+	return dependencies{
 		Copier:      copier,
 		Provisioner: provisioner,
 		Config: dynamodbcopy.NewConfig(
@@ -90,37 +127,4 @@ func wireDependencies(config *viper.Viper) (Deps, error) {
 			config.GetInt(writerCountKey),
 		),
 	}, nil
-}
-
-func SetAndBindFlags(flagSet *pflag.FlagSet, config *viper.Viper) error {
-	flagSet.StringP(srcProfileKey, "s", "", "Set the profile to use for the source table")
-	flagSet.StringP(trgProfileKey, "t", "", "Set the profile to use for the target table")
-	flagSet.Int(readCapacityKey, 0, "Set the read provisioned capacity for the source table")
-	flagSet.Int(writeCapacityKey, 0, "Set the write provisioned capacity for the target table")
-	flagSet.IntP(readerCountKey, "r", 1, "Set the number of read workers to use")
-	flagSet.IntP(writerCountKey, "w", 1, "Set the number of write workers to use")
-
-	return config.BindPFlags(flagSet)
-}
-
-func RunCopyTable(deps Deps) error {
-	initialProvisioning, err := deps.Provisioner.Fetch()
-	if err != nil {
-		return err
-	}
-
-	updateProvisioning := deps.Config.Provisioning(initialProvisioning)
-	if _, err = deps.Provisioner.Update(updateProvisioning); err != nil {
-		return err
-	}
-
-	if err := deps.Copier.Copy(deps.Config.Workers()); err != nil {
-		return err
-	}
-
-	if _, err := deps.Provisioner.Update(initialProvisioning); err != nil {
-		return err
-	}
-
-	return nil
 }

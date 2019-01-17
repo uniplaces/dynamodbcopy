@@ -1,37 +1,35 @@
-package copytable_test
+package copytable
 
 import (
 	"errors"
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uniplaces/dynamodbcopy"
 	"github.com/uniplaces/dynamodbcopy/mocks"
-	"github.com/uniplaces/dynamodbcopy/pkg/cmd/copytable"
 )
 
-func TestRunCopyTable(t *testing.T) {
+func TestRun(t *testing.T) {
 	t.Parallel()
 
-	expectedError := errors.New("run copy error")
+	expectedError := errors.New("copyTable copy error")
 	defaultConfig := dynamodbcopy.NewConfig(5, 5, 1, 1)
 	defaultProvision := dynamodbcopy.Provisioning{}
 
 	testCases := []struct {
-		subTestName   string
-		mocker        func(copier *mocks.Copier, provisioner *mocks.Provisioner)
-		expectedError error
-		config        dynamodbcopy.Config
+		subTestName string
+		mocker      func(copier *mocks.Copier, provisioner *mocks.Provisioner)
+		expectError bool
+		config      dynamodbcopy.Config
 	}{
 		{
 			"FetchProvisioningError",
 			func(copier *mocks.Copier, provisioner *mocks.Provisioner) {
 				provisioner.On("Fetch").Return(dynamodbcopy.Provisioning{}, expectedError).Once()
 			},
-			expectedError,
+			true,
 			defaultConfig,
 		},
 		{
@@ -40,17 +38,28 @@ func TestRunCopyTable(t *testing.T) {
 				provisioner.On("Fetch").Return(defaultProvision, nil).Once()
 				provisioner.On("Update", defaultProvision).Return(defaultProvision, expectedError).Once()
 			},
-			expectedError,
+			true,
 			defaultConfig,
 		},
 		{
 			"CopyError",
 			func(copier *mocks.Copier, provisioner *mocks.Provisioner) {
 				provisioner.On("Fetch").Return(defaultProvision, nil).Once()
-				provisioner.On("Update", defaultProvision).Return(defaultProvision, nil).Once()
+				provisioner.On("Update", defaultProvision).Return(defaultProvision, nil).Twice()
 				copier.On("Copy", 1, 1).Return(expectedError).Once()
 			},
-			expectedError,
+			true,
+			defaultConfig,
+		},
+		{
+			"CopyErrorWithRestoreError",
+			func(copier *mocks.Copier, provisioner *mocks.Provisioner) {
+				provisioner.On("Fetch").Return(defaultProvision, nil).Once()
+				provisioner.On("Update", defaultProvision).Return(defaultProvision, nil).Once()
+				copier.On("Copy", 1, 1).Return(expectedError).Once()
+				provisioner.On("Update", defaultProvision).Return(defaultProvision, expectedError).Once()
+			},
+			true,
 			defaultConfig,
 		},
 		{
@@ -61,7 +70,7 @@ func TestRunCopyTable(t *testing.T) {
 				copier.On("Copy", 1, 1).Return(nil).Once()
 				provisioner.On("Update", defaultProvision).Return(defaultProvision, expectedError).Once()
 			},
-			expectedError,
+			true,
 			defaultConfig,
 		},
 		{
@@ -72,10 +81,11 @@ func TestRunCopyTable(t *testing.T) {
 				copier.On("Copy", 1, 1).Return(nil).Once()
 				provisioner.On("Update", defaultProvision).Return(defaultProvision, nil).Once()
 			},
-			nil,
+			false,
 			defaultConfig,
 		},
 	}
+
 	for _, testCase := range testCases {
 		t.Run(
 			testCase.subTestName,
@@ -85,15 +95,19 @@ func TestRunCopyTable(t *testing.T) {
 
 				testCase.mocker(copierMock, provisionerMock)
 
-				deps := copytable.Deps{
+				deps := dependencies{
 					Copier:      copierMock,
 					Provisioner: provisionerMock,
 					Config:      testCase.config,
 				}
 
-				err := copytable.RunCopyTable(deps)
+				err := run(deps)
 
-				assert.Equal(t, testCase.expectedError, err)
+				if testCase.expectError {
+					require.NotNil(t, err)
+				} else {
+					require.Nil(t, err)
+				}
 
 				copierMock.AssertExpectations(st)
 				provisionerMock.AssertExpectations(st)
@@ -102,21 +116,33 @@ func TestRunCopyTable(t *testing.T) {
 	}
 }
 
-func TestSetAndBindFlags_Default(t *testing.T) {
+func TestBindFlags(t *testing.T) {
 	t.Parallel()
 
 	cmd := &cobra.Command{}
-	config := viper.New()
 
-	err := copytable.SetAndBindFlags(cmd.Flags(), config)
+	bindFlags(cmd.Flags())
+
+	require.NotNil(t, cmd.Flag("source-profile"))
+	require.NotNil(t, cmd.Flag("target-profile"))
+	require.NotNil(t, cmd.Flag("read-capacity"))
+	require.NotNil(t, cmd.Flag("write-capacity"))
+	require.NotNil(t, cmd.Flag("reader-count"))
+	require.NotNil(t, cmd.Flag("writer-count"))
+}
+
+func TestSetupDependencies(t *testing.T) {
+	expectedConfig := dynamodbcopy.NewConfig(0, 0, 1, 1)
+
+	cmd := &cobra.Command{}
+
+	bindFlags(cmd.Flags())
+
+	deps, err := setupDependencies(cmd, []string{"src", "trg"})
 
 	require.Nil(t, err)
+	require.NotNil(t, deps.Provisioner)
+	require.NotNil(t, deps.Copier)
 
-	assert.Equal(t, 6, len(config.AllSettings()))
-	assert.Equal(t, "", config.GetString("source-profile"))
-	assert.Equal(t, "", config.GetString("target-profile"))
-	assert.Equal(t, 0, config.GetInt("read-capacity"))
-	assert.Equal(t, 0, config.GetInt("write-capacity"))
-	assert.Equal(t, 1, config.GetInt("reader-count"))
-	assert.Equal(t, 1, config.GetInt("writer-count"))
+	assert.Equal(t, expectedConfig, deps.Config)
 }
