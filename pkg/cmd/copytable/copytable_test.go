@@ -123,8 +123,8 @@ func TestBindFlags(t *testing.T) {
 
 	bindFlags(cmd.Flags())
 
-	require.NotNil(t, cmd.Flag("source-profile"))
-	require.NotNil(t, cmd.Flag("target-profile"))
+	require.NotNil(t, cmd.Flag("source-role-arn"))
+	require.NotNil(t, cmd.Flag("target-role-arn"))
 	require.NotNil(t, cmd.Flag("read-capacity"))
 	require.NotNil(t, cmd.Flag("write-capacity"))
 	require.NotNil(t, cmd.Flag("reader-count"))

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
@@ -33,22 +34,19 @@ type dynamoDBSerivce struct {
 	sleep     Sleeper
 }
 
-func NewDynamoDBAPI(profile string) DynamoDBAPI {
+func NewDynamoDBAPI(roleArn string) DynamoDBAPI {
 	options := session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}
 
-	if profile != "" {
-		options.Profile = profile
+	currentSession := session.Must(session.NewSessionWithOptions(options))
+	if roleArn != "" {
+		roleCredentials := stscreds.NewCredentials(currentSession, roleArn)
+
+		return dynamodb.New(currentSession, &aws.Config{Credentials: roleCredentials})
 	}
 
-	return dynamodb.New(
-		session.Must(
-			session.NewSessionWithOptions(
-				options,
-			),
-		),
-	)
+	return dynamodb.New(currentSession)
 }
 
 func NewDynamoDBService(tableName string, api DynamoDBAPI, sleepFn Sleeper) DynamoDBService {
@@ -62,7 +60,7 @@ func (db dynamoDBSerivce) DescribeTable() (*dynamodb.TableDescription, error) {
 
 	output, err := db.api.DescribeTable(input)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to describe table %s: %s", db.tableName, err)
 	}
 
 	return output.Table, nil
@@ -90,7 +88,7 @@ func (db dynamoDBSerivce) UpdateCapacity(capacity Capacity) error {
 
 	_, err := db.api.UpdateTable(input)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to update table %s: %s", db.tableName, err)
 	}
 
 	return db.WaitForReadyTable()
@@ -135,7 +133,7 @@ func (db dynamoDBSerivce) batchWriteItem(requests []*dynamodb.WriteRequest) erro
 
 		output, err := db.api.BatchWriteItem(batchInput)
 		if err != nil {
-			return err
+			return fmt.Errorf("unable to batch write to table %s: %s", db.tableName, err)
 		}
 
 		writeRequests = output.UnprocessedItems[tableName]
@@ -187,7 +185,7 @@ func (db dynamoDBSerivce) Scan(totalSegments, segment int) ([]DynamoDBItem, erro
 	}
 
 	if err := db.api.ScanPages(&input, pagerFn); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to scan table %s: %s", db.tableName, err)
 	}
 
 	return items, nil

@@ -89,7 +89,7 @@ func TestCopy(t *testing.T) {
 
 				err := service.Copy(testCase.totalReaders, testCase.totalWriters)
 
-				assert.Equal(t, testCase.expectedError, err)
+				assert.Equal(st, testCase.expectedError, err)
 
 				src.AssertExpectations(st)
 				trg.AssertExpectations(st)

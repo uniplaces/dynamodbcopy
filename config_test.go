@@ -63,10 +63,9 @@ func TestProvisioning(t *testing.T) {
 		t.Run(
 			testCase.subTestName,
 			func(st *testing.T) {
-
 				provisioning := testCase.config.Provisioning(testCase.currentProvisioning)
 
-				assert.Equal(t, testCase.expectedProvisioning, provisioning)
+				assert.Equal(st, testCase.expectedProvisioning, provisioning)
 			},
 		)
 	}

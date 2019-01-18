@@ -17,8 +17,8 @@ const (
 const (
 	srcTableKey      = "source-table"
 	trgTableKey      = "target-table"
-	srcProfileKey    = "source-profile"
-	trgProfileKey    = "target-profile"
+	srcRoleArnKey    = "source-role-arn"
+	trgRoleArnKey    = "target-role-arn"
 	readCapacityKey  = "read-capacity"
 	writeCapacityKey = "write-capacity"
 	readerCountKey   = "reader-count"
@@ -39,12 +39,12 @@ func New() *cobra.Command {
 }
 
 func bindFlags(flagSet *pflag.FlagSet) {
-	flagSet.StringP(srcProfileKey, "s", "", "Set the profile to use for the source table")
-	flagSet.StringP(trgProfileKey, "t", "", "Set the profile to use for the target table")
-	flagSet.Int(readCapacityKey, 0, "Set the read provisioned capacity for the source table")
-	flagSet.Int(writeCapacityKey, 0, "Set the write provisioned capacity for the target table")
-	flagSet.IntP(readerCountKey, "r", 1, "Set the number of read workers to use")
-	flagSet.IntP(writerCountKey, "w", 1, "Set the number of write workers to use")
+	flagSet.StringP(srcRoleArnKey, "s", "", "role arn that allows to read from source table")
+	flagSet.StringP(trgRoleArnKey, "t", "", "role arn that allows to write to target table")
+	flagSet.Int(readCapacityKey, 0, "read provisioning capacity to set on the source table")
+	flagSet.Int(writeCapacityKey, 0, "write provisioning capacity to set on the target table")
+	flagSet.IntP(readerCountKey, "r", 1, "number of read workers to use")
+	flagSet.IntP(writerCountKey, "w", 1, "number of write workers to use")
 }
 
 func runHandler(cmd *cobra.Command, args []string) error {
@@ -105,12 +105,12 @@ func setupDependencies(cmd *cobra.Command, args []string) (dependencies, error) 
 
 	srcTableService := dynamodbcopy.NewDynamoDBService(
 		config.GetString(srcTableKey),
-		dynamodbcopy.NewDynamoDBAPI(config.GetString(srcProfileKey)),
+		dynamodbcopy.NewDynamoDBAPI(config.GetString(srcRoleArnKey)),
 		dynamodbcopy.RandomSleeper,
 	)
 	trgTableService := dynamodbcopy.NewDynamoDBService(
 		config.GetString(trgTableKey),
-		dynamodbcopy.NewDynamoDBAPI(config.GetString(trgProfileKey)),
+		dynamodbcopy.NewDynamoDBAPI(config.GetString(trgRoleArnKey)),
 		dynamodbcopy.RandomSleeper,
 	)
 

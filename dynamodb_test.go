@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/uniplaces/dynamodbcopy"
 	"github.com/uniplaces/dynamodbcopy/mocks"
 )
@@ -28,7 +29,7 @@ func TestDescribeTable(t *testing.T) {
 	testCases := []struct {
 		subTestName         string
 		mocker              func(api *mocks.DynamoDBAPI)
-		expectedError       error
+		errorExpected       bool
 		expectedDescription *dynamodb.TableDescription
 	}{
 		{
@@ -36,7 +37,7 @@ func TestDescribeTable(t *testing.T) {
 			func(api *mocks.DynamoDBAPI) {
 				api.On("DescribeTable", descriptionMock).Return(nil, expectedError).Once()
 			},
-			expectedError,
+			true,
 			nil,
 		},
 		{
@@ -44,7 +45,7 @@ func TestDescribeTable(t *testing.T) {
 			func(api *mocks.DynamoDBAPI) {
 				api.On("DescribeTable", descriptionMock).Return(expectedDescription, nil).Once()
 			},
-			nil,
+			false,
 			expectedDescription.Table,
 		},
 	}
@@ -61,8 +62,8 @@ func TestDescribeTable(t *testing.T) {
 
 				description, err := service.DescribeTable()
 
-				assert.Equal(t, testCase.expectedError, err)
-				assert.Equal(t, testCase.expectedDescription, description)
+				assertExpectedError(st, testCase.errorExpected, err)
+				assert.Equal(st, testCase.expectedDescription, description)
 
 				api.AssertExpectations(st)
 			},
@@ -82,13 +83,13 @@ func TestUpdateCapacity(t *testing.T) {
 		subTestName   string
 		mocker        func(api *mocks.DynamoDBAPI)
 		capacity      dynamodbcopy.Capacity
-		expectedError error
+		errorExpected bool
 	}{
 		{
 			"ZeroError",
 			func(api *mocks.DynamoDBAPI) {},
 			dynamodbcopy.Capacity{Read: 0, Write: 10},
-			errors.New("invalid update capacity read 0, write 10: capacity units must be greater than 0"),
+			true,
 		},
 		{
 			"Error",
@@ -96,7 +97,7 @@ func TestUpdateCapacity(t *testing.T) {
 				api.On("UpdateTable", updateMock).Return(nil, expectedError).Once()
 			},
 			dynamodbcopy.Capacity{Read: 10, Write: 10},
-			expectedError,
+			true,
 		},
 		{
 			"Update",
@@ -106,7 +107,7 @@ func TestUpdateCapacity(t *testing.T) {
 				api.On("DescribeTable", describeMock).Return(output, nil).Once()
 			},
 			dynamodbcopy.Capacity{Read: 10, Write: 10},
-			nil,
+			false,
 		},
 	}
 
@@ -122,7 +123,7 @@ func TestUpdateCapacity(t *testing.T) {
 
 				err := service.UpdateCapacity(testCase.capacity)
 
-				assert.Equal(t, testCase.expectedError, err)
+				assertExpectedError(st, testCase.errorExpected, err)
 
 				api.AssertExpectations(st)
 			},
@@ -144,7 +145,7 @@ func TestWaitForReadyTable(t *testing.T) {
 		subTestName    string
 		mocker         func(api *mocks.DynamoDBAPI)
 		expectedCalled int
-		expectedError  error
+		errorExpected  bool
 	}{
 		{
 			"Error",
@@ -152,7 +153,7 @@ func TestWaitForReadyTable(t *testing.T) {
 				api.On("DescribeTable", descriptionMock).Return(nil, expectedError).Once()
 			},
 			0,
-			expectedError,
+			true,
 		},
 		{
 			"SuccessOnFirstAttempt",
@@ -160,7 +161,7 @@ func TestWaitForReadyTable(t *testing.T) {
 				api.On("DescribeTable", descriptionMock).Return(activeDescribeOutput, nil).Once()
 			},
 			0,
-			nil,
+			false,
 		},
 		{
 			"SuccessOnMultipleAttempts",
@@ -169,7 +170,7 @@ func TestWaitForReadyTable(t *testing.T) {
 				api.On("DescribeTable", descriptionMock).Return(activeDescribeOutput, nil).Once()
 			},
 			4,
-			nil,
+			false,
 		},
 	}
 
@@ -191,8 +192,8 @@ func TestWaitForReadyTable(t *testing.T) {
 
 				err := service.WaitForReadyTable()
 
-				assert.Equal(t, testCase.expectedError, err)
-				assert.Equal(t, testCase.expectedCalled, called)
+				assertExpectedError(st, testCase.errorExpected, err)
+				assert.Equal(st, testCase.expectedCalled, called)
 
 				api.AssertExpectations(st)
 			},
@@ -216,7 +217,7 @@ func TestBatchWrite(t *testing.T) {
 		subTestName   string
 		mocker        func(api *mocks.DynamoDBAPI)
 		items         []dynamodbcopy.DynamoDBItem
-		expectedError error
+		errorExpected bool
 	}{
 		{
 			"Error",
@@ -224,13 +225,13 @@ func TestBatchWrite(t *testing.T) {
 				api.On("BatchWriteItem", &defaultBatchInput).Return(nil, expectedError).Once()
 			},
 			getItems(defaultBatchInput),
-			expectedError,
+			true,
 		},
 		{
 			"NoItems",
 			func(api *mocks.DynamoDBAPI) {},
 			[]dynamodbcopy.DynamoDBItem{},
-			nil,
+			false,
 		},
 		{
 			"LessThanMaxBatchSize",
@@ -238,7 +239,7 @@ func TestBatchWrite(t *testing.T) {
 				api.On("BatchWriteItem", &defaultBatchInput).Return(&dynamodb.BatchWriteItemOutput{}, nil).Once()
 			},
 			getItems(defaultBatchInput),
-			nil,
+			false,
 		},
 		{
 			"GreaterThanMaxBatchSize",
@@ -250,7 +251,7 @@ func TestBatchWrite(t *testing.T) {
 				getItems(firstBatchInput),
 				getItems(secondBatchInput)...,
 			),
-			nil,
+			false,
 		},
 		{
 			"GreaterThanMaxBatchSizeWithError",
@@ -261,7 +262,7 @@ func TestBatchWrite(t *testing.T) {
 				getItems(firstBatchInput),
 				getItems(secondBatchInput)...,
 			),
-			expectedError,
+			true,
 		},
 		{
 			"UnprocessedItems",
@@ -272,7 +273,7 @@ func TestBatchWrite(t *testing.T) {
 				api.On("BatchWriteItem", &defaultBatchInput).Return(&dynamodb.BatchWriteItemOutput{}, nil).Once()
 			},
 			getItems(defaultBatchInput),
-			nil,
+			false,
 		},
 	}
 
@@ -288,7 +289,7 @@ func TestBatchWrite(t *testing.T) {
 
 				err := service.BatchWrite(testCase.items)
 
-				assert.Equal(t, testCase.expectedError, err)
+				assertExpectedError(st, testCase.errorExpected, err)
 
 				api.AssertExpectations(st)
 			},
@@ -306,7 +307,7 @@ func TestScan(t *testing.T) {
 		mocker        func(api *mocks.DynamoDBAPI)
 		totalSegments int
 		segment       int
-		expectedError error
+		errorExpected bool
 	}{
 		{
 			"Error",
@@ -315,14 +316,14 @@ func TestScan(t *testing.T) {
 			},
 			1,
 			0,
-			expectedError,
+			true,
 		},
 		{
 			"TotalSegmentsError",
 			func(api *mocks.DynamoDBAPI) {},
 			0,
 			0,
-			errors.New("totalSegments has to be greater than 0"),
+			true,
 		},
 		{
 			"TotalSegmentsIsOne",
@@ -331,7 +332,7 @@ func TestScan(t *testing.T) {
 			},
 			1,
 			0,
-			nil,
+			false,
 		},
 		{
 			"TotalSegmentsIsGreaterThanOne",
@@ -340,7 +341,7 @@ func TestScan(t *testing.T) {
 			},
 			5,
 			2,
-			nil,
+			false,
 		},
 	}
 
@@ -356,11 +357,19 @@ func TestScan(t *testing.T) {
 
 				_, err := service.Scan(testCase.totalSegments, testCase.segment)
 
-				assert.Equal(t, testCase.expectedError, err)
+				assertExpectedError(st, testCase.errorExpected, err)
 
 				api.AssertExpectations(st)
 			},
 		)
+	}
+}
+
+func assertExpectedError(t *testing.T, errorExpected bool, err error) {
+	if errorExpected {
+		require.NotNil(t, err)
+	} else {
+		require.Nil(t, err)
 	}
 }
 
