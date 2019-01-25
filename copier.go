@@ -9,18 +9,19 @@ type Copier interface {
 type copyService struct {
 	srcTable DynamoDBService
 	trgTable DynamoDBService
+	chans    CopierChans
 }
 
-func NewCopier(srcTableService, trgTableService DynamoDBService) Copier {
+func NewCopier(srcTableService, trgTableService DynamoDBService, chans CopierChans) Copier {
 	return copyService{
 		srcTable: srcTableService,
 		trgTable: trgTableService,
+		chans:    chans,
 	}
 }
 
 func (service copyService) Copy(readers, writers int) error {
-	errChan := make(chan error)
-	itemsChan := make(chan []DynamoDBItem)
+	itemsChan, errChan := service.chans.Items, service.chans.Errors
 
 	wgReaders := &sync.WaitGroup{}
 	wgReaders.Add(readers)
@@ -55,20 +56,31 @@ func (service copyService) read(
 ) {
 	defer wg.Done()
 
-	items, err := service.srcTable.Scan(totalReaders, readerID)
+	err := service.srcTable.Scan(totalReaders, readerID, itemsChan)
 	if err != nil {
 		errChan <- err
-
-		return
 	}
-
-	itemsChan <- items
 }
 
 func (service copyService) write(wg *sync.WaitGroup, itemsChan <-chan []DynamoDBItem, errChan chan<- error) {
 	defer wg.Done()
 
-	if err := service.trgTable.BatchWrite(<-itemsChan); err != nil {
-		errChan <- err
+	for items := range itemsChan {
+		if err := service.trgTable.BatchWrite(items); err != nil {
+			errChan <- err
+		}
+	}
+}
+
+// CopierChans encapsulates the chan that are used by the copier
+type CopierChans struct {
+	Items  chan []DynamoDBItem
+	Errors chan error
+}
+
+func NewCopierChans(itemsChanSize int) CopierChans {
+	return CopierChans{
+		Items:  make(chan []DynamoDBItem, itemsChanSize),
+		Errors: make(chan error),
 	}
 }

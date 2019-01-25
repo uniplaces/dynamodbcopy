@@ -114,7 +114,11 @@ func setupDependencies(cmd *cobra.Command, args []string) (dependencies, error) 
 		dynamodbcopy.RandomSleeper,
 	)
 
-	copier := dynamodbcopy.NewCopier(srcTableService, trgTableService)
+	copier := dynamodbcopy.NewCopier(
+		srcTableService,
+		trgTableService,
+		dynamodbcopy.NewCopierChans(config.GetInt(writerCountKey)),
+	)
 	provisioner := dynamodbcopy.NewProvisioner(srcTableService, trgTableService)
 
 	return dependencies{

@@ -25,7 +25,7 @@ type DynamoDBService interface {
 	UpdateCapacity(capacity Capacity) error
 	WaitForReadyTable() error
 	BatchWrite(items []DynamoDBItem) error
-	Scan(totalSegments, segment int) ([]DynamoDBItem, error)
+	Scan(totalSegments, segment int, itemsChan chan<- []DynamoDBItem) error
 }
 
 type dynamoDBSerivce struct {
@@ -161,9 +161,9 @@ func (db dynamoDBSerivce) WaitForReadyTable() error {
 	return nil
 }
 
-func (db dynamoDBSerivce) Scan(totalSegments, segment int) ([]DynamoDBItem, error) {
+func (db dynamoDBSerivce) Scan(totalSegments, segment int, itemsChan chan<- []DynamoDBItem) error {
 	if totalSegments == 0 {
-		return nil, errors.New("totalSegments has to be greater than 0")
+		return errors.New("totalSegments has to be greater than 0")
 	}
 
 	input := dynamodb.ScanInput{
@@ -175,18 +175,20 @@ func (db dynamoDBSerivce) Scan(totalSegments, segment int) ([]DynamoDBItem, erro
 		input.SetTotalSegments(int64(totalSegments))
 	}
 
-	var items []DynamoDBItem
 	pagerFn := func(output *dynamodb.ScanOutput, b bool) bool {
+		var items []DynamoDBItem
 		for _, item := range output.Items {
 			items = append(items, item)
 		}
+
+		itemsChan <- items
 
 		return !b
 	}
 
 	if err := db.api.ScanPages(&input, pagerFn); err != nil {
-		return nil, fmt.Errorf("unable to scan table %s: %s", db.tableName, err)
+		return fmt.Errorf("unable to scan table %s: %s", db.tableName, err)
 	}
 
-	return items, nil
+	return nil
 }

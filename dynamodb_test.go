@@ -355,7 +355,7 @@ func TestScan(t *testing.T) {
 
 				service := dynamodbcopy.NewDynamoDBService(expectedTableName, api, testSleeper)
 
-				_, err := service.Scan(testCase.totalSegments, testCase.segment)
+				err := service.Scan(testCase.totalSegments, testCase.segment, make(chan []dynamodbcopy.DynamoDBItem))
 
 				assertExpectedError(st, testCase.errorExpected, err)
 
