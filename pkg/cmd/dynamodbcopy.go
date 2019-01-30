@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"log"
+	"os"
+
 	"github.com/spf13/cobra"
 	"github.com/uniplaces/dynamodbcopy/pkg/cmd/copytable"
 )
@@ -13,7 +16,7 @@ func New() *cobra.Command {
 	}
 
 	cmd.AddCommand(
-		copytable.New(),
+		copytable.New(log.New(os.Stdout, "", log.LstdFlags)),
 	)
 
 	return cmd

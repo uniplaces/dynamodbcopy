@@ -23,14 +23,15 @@ const (
 	writeCapacityKey = "write-capacity"
 	readerCountKey   = "reader-count"
 	writerCountKey   = "writer-count"
+	debugKey         = "debug"
 )
 
-func New() *cobra.Command {
+func New(logger dynamodbcopy.Logger) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   fmt.Sprintf("%s <source-table> <target-table>", cmdName),
 		Short: shortDescription,
 		Args:  cobra.ExactArgs(2),
-		RunE:  runHandler,
+		RunE:  runHandler(logger),
 	}
 
 	bindFlags(cmd.Flags())
@@ -45,15 +46,18 @@ func bindFlags(flagSet *pflag.FlagSet) {
 	flagSet.Int(writeCapacityKey, 0, "write provisioning capacity to set on the target table")
 	flagSet.IntP(readerCountKey, "r", 1, "number of read workers to use")
 	flagSet.IntP(writerCountKey, "w", 1, "number of write workers to use")
+	flagSet.BoolP(debugKey, "d", false, "enable debug logs")
 }
 
-func runHandler(cmd *cobra.Command, args []string) error {
-	deps, err := setupDependencies(cmd, args)
-	if err != nil {
-		return handleError("error setting up dependencies", err)
-	}
+func runHandler(logger dynamodbcopy.Logger) func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		deps, err := setupDependencies(cmd, args, logger)
+		if err != nil {
+			return handleError("error setting up dependencies", err)
+		}
 
-	return run(deps)
+		return run(deps)
+	}
 }
 
 func run(deps dependencies) error {
@@ -84,7 +88,7 @@ func run(deps dependencies) error {
 }
 
 func handleError(msg string, err error) error {
-	return fmt.Errorf("[%s] %s\n%s", cmdName, msg, err)
+	return fmt.Errorf("[%s] %s: %s", cmdName, msg, err)
 }
 
 type dependencies struct {
@@ -93,7 +97,7 @@ type dependencies struct {
 	Config      dynamodbcopy.Config
 }
 
-func setupDependencies(cmd *cobra.Command, args []string) (dependencies, error) {
+func setupDependencies(cmd *cobra.Command, args []string, logger dynamodbcopy.Logger) (dependencies, error) {
 	config := viper.New()
 
 	config.SetDefault(srcTableKey, args[0])
@@ -103,23 +107,30 @@ func setupDependencies(cmd *cobra.Command, args []string) (dependencies, error) 
 		return dependencies{}, err
 	}
 
+	debugLogger := dynamodbcopy.NewDebugLogger(
+		logger,
+		config.GetBool(debugKey),
+	)
 	srcTableService := dynamodbcopy.NewDynamoDBService(
 		config.GetString(srcTableKey),
 		dynamodbcopy.NewDynamoDBAPI(config.GetString(srcRoleArnKey)),
 		dynamodbcopy.RandomSleeper,
+		debugLogger,
 	)
 	trgTableService := dynamodbcopy.NewDynamoDBService(
 		config.GetString(trgTableKey),
 		dynamodbcopy.NewDynamoDBAPI(config.GetString(trgRoleArnKey)),
 		dynamodbcopy.RandomSleeper,
+		debugLogger,
 	)
 
 	copier := dynamodbcopy.NewCopier(
 		srcTableService,
 		trgTableService,
 		dynamodbcopy.NewCopierChans(config.GetInt(writerCountKey)),
+		debugLogger,
 	)
-	provisioner := dynamodbcopy.NewProvisioner(srcTableService, trgTableService)
+	provisioner := dynamodbcopy.NewProvisioner(srcTableService, trgTableService, debugLogger)
 
 	return dependencies{
 		Copier:      copier,

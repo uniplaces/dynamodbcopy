@@ -3,15 +3,22 @@ package dynamodbcopy
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
 )
 
-const maxBatchWriteSize = 25
+const (
+	maxBatchWriteSize = 25
+	maxRetryTime      = int(time.Minute) * 3
+
+	errCodeThrottlingException = "ThrottlingException"
+)
 
 // DynamoDBAPI just a wrapper over aws-sdk dynamodbiface.DynamoDBAPI interface for mocking purposes
 type DynamoDBAPI interface {
@@ -32,6 +39,7 @@ type dynamoDBSerivce struct {
 	tableName string
 	api       DynamoDBAPI
 	sleep     Sleeper
+	logger    Logger
 }
 
 func NewDynamoDBAPI(roleArn string) DynamoDBAPI {
@@ -49,8 +57,8 @@ func NewDynamoDBAPI(roleArn string) DynamoDBAPI {
 	return dynamodb.New(currentSession)
 }
 
-func NewDynamoDBService(tableName string, api DynamoDBAPI, sleepFn Sleeper) DynamoDBService {
-	return dynamoDBSerivce{tableName, api, sleepFn}
+func NewDynamoDBService(tableName string, api DynamoDBAPI, sleepFn Sleeper, logger Logger) DynamoDBService {
+	return dynamoDBSerivce{tableName, api, sleepFn, logger}
 }
 
 func (db dynamoDBSerivce) DescribeTable() (*dynamodb.TableDescription, error) {
@@ -86,6 +94,7 @@ func (db dynamoDBSerivce) UpdateCapacity(capacity Capacity) error {
 		},
 	}
 
+	db.logger.Printf("updating %s with read: %d, write: %d", db.tableName, read, write)
 	_, err := db.api.UpdateTable(input)
 	if err != nil {
 		return fmt.Errorf("unable to update table %s: %s", db.tableName, err)
@@ -95,6 +104,7 @@ func (db dynamoDBSerivce) UpdateCapacity(capacity Capacity) error {
 }
 
 func (db dynamoDBSerivce) BatchWrite(items []DynamoDBItem) error {
+	db.logger.Printf("writing batch of %d to %s", len(items), db.tableName)
 	if len(items) == 0 {
 		return nil
 	}
@@ -125,40 +135,76 @@ func (db dynamoDBSerivce) batchWriteItem(requests []*dynamodb.WriteRequest) erro
 
 	writeRequests := requests
 	for len(writeRequests) != 0 {
-		batchInput := &dynamodb.BatchWriteItemInput{
-			RequestItems: map[string][]*dynamodb.WriteRequest{
-				tableName: writeRequests,
-			},
+		retryHandler := func(attempt, elapsed int) (bool, error) {
+			batchInput := &dynamodb.BatchWriteItemInput{
+				RequestItems: map[string][]*dynamodb.WriteRequest{
+					tableName: writeRequests,
+				},
+			}
+
+			output, err := db.api.BatchWriteItem(batchInput)
+			if err == nil {
+				writeRequests = output.UnprocessedItems[tableName]
+
+				return true, nil
+			}
+
+			if awsErr, ok := err.(awserr.Error); ok {
+				switch awsErr.Code() {
+				case dynamodb.ErrCodeProvisionedThroughputExceededException:
+					db.logger.Printf("batch write provisioning error: waited %d ms (attempt %d)", elapsed, attempt)
+					return false, nil
+				case errCodeThrottlingException:
+					db.logger.Printf("batch write throttling error: waited %d ms (attempt %d)", elapsed, attempt)
+					return false, nil
+				default:
+					return false, fmt.Errorf(
+						"aws %s error in batch write to table %s: %s",
+						awsErr.Code(),
+						db.tableName,
+						awsErr.Error(),
+					)
+				}
+			}
+
+			return false, fmt.Errorf("unable to batch write to table %s: %s", db.tableName, err)
 		}
 
-		output, err := db.api.BatchWriteItem(batchInput)
-		if err != nil {
-			return fmt.Errorf("unable to batch write to table %s: %s", db.tableName, err)
+		if err := db.retry(retryHandler); err != nil {
+			return err
 		}
-
-		writeRequests = output.UnprocessedItems[tableName]
 	}
 
 	return nil
 }
 
 func (db dynamoDBSerivce) WaitForReadyTable() error {
-	elapsed := 0
-
-	for attempt := 0; ; attempt++ {
+	return db.retry(func(attempt, elapsed int) (bool, error) {
 		description, err := db.DescribeTable()
+		if err != nil {
+			return false, err
+		}
+
+		return *description.TableStatus == dynamodb.TableStatusActive, nil
+	})
+}
+
+func (db dynamoDBSerivce) retry(handler func(attempt, elapsed int) (bool, error)) error {
+	elapsed := 0
+	for attempt := 0; elapsed < maxRetryTime; attempt++ {
+		handled, err := handler(attempt, elapsed)
 		if err != nil {
 			return err
 		}
 
-		if *description.TableStatus == dynamodb.TableStatusActive {
-			break
+		if handled {
+			return nil
 		}
 
 		elapsed += db.sleep(elapsed * attempt)
 	}
 
-	return nil
+	return fmt.Errorf("waited for too long (%d ms) to perform operation on %s table", elapsed, db.tableName)
 }
 
 func (db dynamoDBSerivce) Scan(totalSegments, segment int, itemsChan chan<- []DynamoDBItem) error {
@@ -175,11 +221,14 @@ func (db dynamoDBSerivce) Scan(totalSegments, segment int, itemsChan chan<- []Dy
 		input.SetTotalSegments(int64(totalSegments))
 	}
 
+	totalScanned := 0
 	pagerFn := func(output *dynamodb.ScanOutput, b bool) bool {
 		var items []DynamoDBItem
 		for _, item := range output.Items {
 			items = append(items, item)
+			totalScanned++
 		}
+		db.logger.Printf("%s table scanned page with %d items (reader %d)", db.tableName, len(items), segment)
 
 		itemsChan <- items
 
@@ -189,6 +238,8 @@ func (db dynamoDBSerivce) Scan(totalSegments, segment int, itemsChan chan<- []Dy
 	if err := db.api.ScanPages(&input, pagerFn); err != nil {
 		return fmt.Errorf("unable to scan table %s: %s", db.tableName, err)
 	}
+
+	db.logger.Printf("%s table scanned a total of %d items (reader %d)", db.tableName, totalScanned, segment)
 
 	return nil
 }

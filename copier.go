@@ -1,6 +1,9 @@
 package dynamodbcopy
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 type Copier interface {
 	Copy(readers, writers int) error
@@ -10,17 +13,20 @@ type copyService struct {
 	srcTable DynamoDBService
 	trgTable DynamoDBService
 	chans    CopierChans
+	logger   Logger
 }
 
-func NewCopier(srcTableService, trgTableService DynamoDBService, chans CopierChans) Copier {
+func NewCopier(srcTableService, trgTableService DynamoDBService, chans CopierChans, logger Logger) Copier {
 	return copyService{
 		srcTable: srcTableService,
 		trgTable: trgTableService,
 		chans:    chans,
+		logger:   logger,
 	}
 }
 
 func (service copyService) Copy(readers, writers int) error {
+	service.logger.Printf("copying table with %d readers and %d writers", readers, writers)
 	itemsChan, errChan := service.chans.Items, service.chans.Errors
 
 	wgReaders := &sync.WaitGroup{}
@@ -54,7 +60,12 @@ func (service copyService) read(
 	itemsChan chan<- []DynamoDBItem,
 	errChan chan<- error,
 ) {
-	defer wg.Done()
+	defer func() {
+		if err := recover(); err != nil {
+			errChan <- fmt.Errorf("read recovery: %s", err)
+		}
+		wg.Done()
+	}()
 
 	err := service.srcTable.Scan(totalReaders, readerID, itemsChan)
 	if err != nil {
@@ -63,13 +74,23 @@ func (service copyService) read(
 }
 
 func (service copyService) write(wg *sync.WaitGroup, itemsChan <-chan []DynamoDBItem, errChan chan<- error) {
-	defer wg.Done()
+	defer func() {
+		if err := recover(); err != nil {
+			errChan <- fmt.Errorf("write recovery: %s", err)
+		}
+		wg.Done()
+	}()
 
+	totalWritten := 0
 	for items := range itemsChan {
 		if err := service.trgTable.BatchWrite(items); err != nil {
 			errChan <- err
 		}
+
+		totalWritten += len(items)
 	}
+
+	service.logger.Printf("writer wrote a total of %d items", totalWritten)
 }
 
 // CopierChans encapsulates the chan that are used by the copier

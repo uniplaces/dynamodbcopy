@@ -2,6 +2,8 @@ package dynamodbcopy_test
 
 import (
 	"errors"
+	"io/ioutil"
+	"log"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -67,7 +69,11 @@ func TestFetch(t *testing.T) {
 
 				testCase.mocker(srcService, trgService)
 
-				provisioner := dynamodbcopy.NewProvisioner(srcService, trgService)
+				provisioner := dynamodbcopy.NewProvisioner(
+					srcService,
+					trgService,
+					log.New(ioutil.Discard, "", log.Ltime),
+				)
 
 				fetchedProvisioning, err := provisioner.Fetch()
 
@@ -208,7 +214,11 @@ func TestUpdate(t *testing.T) {
 
 				testCase.mocker(srcService, trgService)
 
-				provisioner := dynamodbcopy.NewProvisioner(srcService, trgService)
+				provisioner := dynamodbcopy.NewProvisioner(
+					srcService,
+					trgService,
+					log.New(ioutil.Discard, "", log.Ltime),
+				)
 
 				fetchedProvisioning, err := provisioner.Update(testCase.updateProvisioning)
 

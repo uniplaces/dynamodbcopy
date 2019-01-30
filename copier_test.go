@@ -2,12 +2,15 @@ package dynamodbcopy_test
 
 import (
 	"errors"
+	"io/ioutil"
+	"log"
 	"strconv"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/uniplaces/dynamodbcopy"
 	"github.com/uniplaces/dynamodbcopy/mocks"
 )
@@ -87,6 +90,34 @@ func TestCopy(t *testing.T) {
 			3,
 			nil,
 		},
+		{
+			"ReadPanic",
+			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChans) {
+				var readChan chan<- []dynamodbcopy.DynamoDBItem = chans.Items
+				src.On("Scan", 1, 0, readChan).Run(func(args mock.Arguments) {
+					panic("read panic")
+				}).Once()
+			},
+			1,
+			1,
+			errors.New("read recovery: read panic"),
+		},
+		{
+			"WritePanic",
+			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChans) {
+				var readChan chan<- []dynamodbcopy.DynamoDBItem = chans.Items
+				src.On("Scan", 1, 0, readChan).Return(nil).Once()
+
+				items := buildItems(1)
+				chans.Items <- items
+				trg.On("BatchWrite", items).Run(func(args mock.Arguments) {
+					panic("write panic")
+				}).Once()
+			},
+			1,
+			1,
+			errors.New("write recovery: write panic"),
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -100,7 +131,7 @@ func TestCopy(t *testing.T) {
 
 				testCase.mocker(src, trg, &copierChans)
 
-				service := dynamodbcopy.NewCopier(src, trg, copierChans)
+				service := dynamodbcopy.NewCopier(src, trg, copierChans, log.New(ioutil.Discard, "", log.Ltime))
 
 				err := service.Copy(testCase.totalReaders, testCase.totalWriters)
 

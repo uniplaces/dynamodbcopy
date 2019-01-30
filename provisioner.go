@@ -10,12 +10,14 @@ type Provisioner interface {
 type provisioningService struct {
 	srcTable DynamoDBService
 	trgTable DynamoDBService
+	logger   Logger
 }
 
-func NewProvisioner(srcTableService, trgTableService DynamoDBService) Provisioner {
+func NewProvisioner(srcTableService, trgTableService DynamoDBService, logger Logger) Provisioner {
 	return provisioningService{
 		srcTable: srcTableService,
 		trgTable: trgTableService,
+		logger:   logger,
 	}
 }
 
@@ -43,12 +45,16 @@ func (dc provisioningService) Update(provisioning Provisioning) (Provisioning, e
 		if err := dc.srcTable.UpdateCapacity(*provisioning.Source); err != nil {
 			return Provisioning{}, err
 		}
+
+		dc.logger.Printf("updated source table r: %d w: %d", provisioning.Source.Read, provisioning.Source.Write)
 	}
 
 	if needsProvisioningUpdate(currentProvisioning.Target, provisioning.Target) {
 		if err := dc.trgTable.UpdateCapacity(*provisioning.Target); err != nil {
 			return Provisioning{}, err
 		}
+
+		dc.logger.Printf("updated target table r: %d w: %d", provisioning.Target.Read, provisioning.Target.Write)
 	}
 
 	return provisioning, nil
