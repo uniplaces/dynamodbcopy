@@ -23,14 +23,14 @@ func TestCopy(t *testing.T) {
 
 	testCases := []struct {
 		subTestName   string
-		mocker        func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChans)
+		mocker        func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChan)
 		totalReaders  int
 		totalWriters  int
 		expectedError error
 	}{
 		{
 			"ScanError",
-			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChans) {
+			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChan) {
 				var readChan chan<- []dynamodbcopy.DynamoDBItem = chans.Items
 				src.On("Scan", 1, 0, readChan).Return(scanError).Once()
 			},
@@ -40,7 +40,7 @@ func TestCopy(t *testing.T) {
 		},
 		{
 			"BatchWriteError",
-			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChans) {
+			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChan) {
 				var readChan chan<- []dynamodbcopy.DynamoDBItem = chans.Items
 				src.On("Scan", 1, 0, readChan).Return(nil).Once()
 
@@ -54,7 +54,7 @@ func TestCopy(t *testing.T) {
 		},
 		{
 			"Success",
-			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChans) {
+			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChan) {
 				var readChan chan<- []dynamodbcopy.DynamoDBItem = chans.Items
 				src.On("Scan", 1, 0, readChan).Return(nil).Once()
 
@@ -68,7 +68,7 @@ func TestCopy(t *testing.T) {
 		},
 		{
 			"MultipleWorkers",
-			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChans) {
+			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChan) {
 				var readChan chan<- []dynamodbcopy.DynamoDBItem = chans.Items
 				src.On("Scan", 3, 0, readChan).Return(nil).Once()
 				src.On("Scan", 3, 1, readChan).Return(nil).Once()
@@ -92,7 +92,7 @@ func TestCopy(t *testing.T) {
 		},
 		{
 			"ReadPanic",
-			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChans) {
+			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChan) {
 				var readChan chan<- []dynamodbcopy.DynamoDBItem = chans.Items
 				src.On("Scan", 1, 0, readChan).Run(func(args mock.Arguments) {
 					panic("read panic")
@@ -104,7 +104,7 @@ func TestCopy(t *testing.T) {
 		},
 		{
 			"WritePanic",
-			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChans) {
+			func(src, trg *mocks.DynamoDBService, chans *dynamodbcopy.CopierChan) {
 				var readChan chan<- []dynamodbcopy.DynamoDBItem = chans.Items
 				src.On("Scan", 1, 0, readChan).Return(nil).Once()
 
@@ -127,7 +127,7 @@ func TestCopy(t *testing.T) {
 				src := &mocks.DynamoDBService{}
 				trg := &mocks.DynamoDBService{}
 
-				copierChans := dynamodbcopy.NewCopierChans(testCase.totalWriters)
+				copierChans := dynamodbcopy.NewCopierChan(testCase.totalWriters)
 
 				testCase.mocker(src, trg, &copierChans)
 

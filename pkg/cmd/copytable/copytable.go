@@ -26,6 +26,7 @@ const (
 	debugKey         = "debug"
 )
 
+// New creates a new instance of the copy-table command
 func New(logger dynamodbcopy.Logger) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   fmt.Sprintf("%s <source-table> <target-table>", cmdName),
@@ -113,13 +114,13 @@ func setupDependencies(cmd *cobra.Command, args []string, logger dynamodbcopy.Lo
 	)
 	srcTableService := dynamodbcopy.NewDynamoDBService(
 		config.GetString(srcTableKey),
-		dynamodbcopy.NewDynamoDBAPI(config.GetString(srcRoleArnKey)),
+		dynamodbcopy.NewDynamoClient(config.GetString(srcRoleArnKey)),
 		dynamodbcopy.RandomSleeper,
 		debugLogger,
 	)
 	trgTableService := dynamodbcopy.NewDynamoDBService(
 		config.GetString(trgTableKey),
-		dynamodbcopy.NewDynamoDBAPI(config.GetString(trgRoleArnKey)),
+		dynamodbcopy.NewDynamoClient(config.GetString(trgRoleArnKey)),
 		dynamodbcopy.RandomSleeper,
 		debugLogger,
 	)
@@ -127,7 +128,7 @@ func setupDependencies(cmd *cobra.Command, args []string, logger dynamodbcopy.Lo
 	copier := dynamodbcopy.NewCopier(
 		srcTableService,
 		trgTableService,
-		dynamodbcopy.NewCopierChans(config.GetInt(writerCountKey)),
+		dynamodbcopy.NewCopierChan(config.GetInt(writerCountKey)),
 		debugLogger,
 	)
 	provisioner := dynamodbcopy.NewProvisioner(srcTableService, trgTableService, debugLogger)

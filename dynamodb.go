@@ -20,29 +20,21 @@ const (
 	errCodeThrottlingException = "ThrottlingException"
 )
 
-// DynamoDBAPI just a wrapper over aws-sdk dynamodbiface.DynamoDBAPI interface for mocking purposes
-type DynamoDBAPI interface {
+// DynamoDBClient is a wrapper interface over aws-sdk dynamodbiface.DynamoDBClient for mocking purposes
+type DynamoDBClient interface {
 	dynamodbiface.DynamoDBAPI
 }
 
-type DynamoDBItem map[string]*dynamodb.AttributeValue
-
-type DynamoDBService interface {
-	DescribeTable() (*dynamodb.TableDescription, error)
-	UpdateCapacity(capacity Capacity) error
-	WaitForReadyTable() error
-	BatchWrite(items []DynamoDBItem) error
-	Scan(totalSegments, segment int, itemsChan chan<- []DynamoDBItem) error
-}
-
-type dynamoDBSerivce struct {
-	tableName string
-	api       DynamoDBAPI
-	sleep     Sleeper
-	logger    Logger
-}
-
-func NewDynamoDBAPI(roleArn string) DynamoDBAPI {
+// NewDynamoClient creates a DynamoDB client wrapper around the AWS-SDK with a predefined Session.
+// By default, it creates a new Session with SharedConfigEnable,
+// so you can use AWS SDK's environment variables and AWS credentials to connect to DynamoDB.
+//
+// The provided ARN role allows you to configure the Session to assume a specific IAM Role.
+//
+// If an empty string is provided, it will create a new session with SharedConfigEnable
+// Please refer to https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html for more
+// information on how you can set up the SDK
+func NewDynamoClient(roleArn string) DynamoDBClient {
 	options := session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}
@@ -57,16 +49,37 @@ func NewDynamoDBAPI(roleArn string) DynamoDBAPI {
 	return dynamodb.New(currentSession)
 }
 
-func NewDynamoDBService(tableName string, api DynamoDBAPI, sleepFn Sleeper, logger Logger) DynamoDBService {
-	return dynamoDBSerivce{tableName, api, sleepFn, logger}
+// DynamoDBItem type to abstract a DynamoDB item
+type DynamoDBItem map[string]*dynamodb.AttributeValue
+
+// DynamoDBService interface provides methods to call the aws sdk
+type DynamoDBService interface {
+	DescribeTable() (*dynamodb.TableDescription, error)
+	UpdateCapacity(capacity Capacity) error
+	WaitForReadyTable() error
+	BatchWrite(items []DynamoDBItem) error
+	Scan(totalSegments, segment int, itemsChan chan<- []DynamoDBItem) error
 }
 
+type dynamoDBSerivce struct {
+	tableName string
+	client    DynamoDBClient
+	sleep     Sleeper
+	logger    Logger
+}
+
+// NewDynamoDBService creates new service for a given DynamoDB table with a previously configured DynamoDB client
+func NewDynamoDBService(tableName string, client DynamoDBClient, sleepFn Sleeper, logger Logger) DynamoDBService {
+	return dynamoDBSerivce{tableName, client, sleepFn, logger}
+}
+
+// DescribeTable returns the current table metadata for the DynamoDB table
 func (db dynamoDBSerivce) DescribeTable() (*dynamodb.TableDescription, error) {
 	input := &dynamodb.DescribeTableInput{
 		TableName: aws.String(db.tableName),
 	}
 
-	output, err := db.api.DescribeTable(input)
+	output, err := db.client.DescribeTable(input)
 	if err != nil {
 		return nil, fmt.Errorf("unable to describe table %s: %s", db.tableName, err)
 	}
@@ -74,6 +87,7 @@ func (db dynamoDBSerivce) DescribeTable() (*dynamodb.TableDescription, error) {
 	return output.Table, nil
 }
 
+// UpdateCapacity sets the tables read and write capacity, waiting for the table to be ready for processing
 func (db dynamoDBSerivce) UpdateCapacity(capacity Capacity) error {
 	read := capacity.Read
 	write := capacity.Write
@@ -95,7 +109,7 @@ func (db dynamoDBSerivce) UpdateCapacity(capacity Capacity) error {
 	}
 
 	db.logger.Printf("updating %s with read: %d, write: %d", db.tableName, read, write)
-	_, err := db.api.UpdateTable(input)
+	_, err := db.client.UpdateTable(input)
 	if err != nil {
 		return fmt.Errorf("unable to update table %s: %s", db.tableName, err)
 	}
@@ -103,6 +117,13 @@ func (db dynamoDBSerivce) UpdateCapacity(capacity Capacity) error {
 	return db.WaitForReadyTable()
 }
 
+// BatchWrite writes the given DynamoDBItem slice into the DynamoDB table.
+//
+// The given items will be written in groups of 25 each.
+//
+// This method will retry:
+// 	1 - if there are any any unprocessed items when performing the BatchWrite
+// 	2 - if there is a Provisioning or Throttling aws error (tries for a max time of 3 minutes)
 func (db dynamoDBSerivce) BatchWrite(items []DynamoDBItem) error {
 	db.logger.Printf("writing batch of %d to %s", len(items), db.tableName)
 	if len(items) == 0 {
@@ -142,7 +163,7 @@ func (db dynamoDBSerivce) batchWriteItem(requests []*dynamodb.WriteRequest) erro
 				},
 			}
 
-			output, err := db.api.BatchWriteItem(batchInput)
+			output, err := db.client.BatchWriteItem(batchInput)
 			if err == nil {
 				writeRequests = output.UnprocessedItems[tableName]
 
@@ -178,6 +199,7 @@ func (db dynamoDBSerivce) batchWriteItem(requests []*dynamodb.WriteRequest) erro
 	return nil
 }
 
+// WaitForReadyTable will wait for the table status to be active (waits for 3 minutes)
 func (db dynamoDBSerivce) WaitForReadyTable() error {
 	return db.retry(func(attempt, elapsed int) (bool, error) {
 		description, err := db.DescribeTable()
@@ -207,6 +229,8 @@ func (db dynamoDBSerivce) retry(handler func(attempt, elapsed int) (bool, error)
 	return fmt.Errorf("waited for too long (%d ms) to perform operation on %s table", elapsed, db.tableName)
 }
 
+// Scan allows you to perform a parallel scan over the table, writing the scanned items into the provided itemsChan
+// If totalSegments is equal to 1, it will perform a sequential scan.
 func (db dynamoDBSerivce) Scan(totalSegments, segment int, itemsChan chan<- []DynamoDBItem) error {
 	if totalSegments == 0 {
 		return errors.New("totalSegments has to be greater than 0")
@@ -235,7 +259,7 @@ func (db dynamoDBSerivce) Scan(totalSegments, segment int, itemsChan chan<- []Dy
 		return !b
 	}
 
-	if err := db.api.ScanPages(&input, pagerFn); err != nil {
+	if err := db.client.ScanPages(&input, pagerFn); err != nil {
 		return fmt.Errorf("unable to scan table %s: %s", db.tableName, err)
 	}
 

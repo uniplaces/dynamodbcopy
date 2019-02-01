@@ -10,6 +10,7 @@ import (
 
 const cmdName = "dynamodbcopy"
 
+// New creates the root dynamodbcopy command
 func New() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: cmdName,

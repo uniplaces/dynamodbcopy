@@ -5,29 +5,33 @@ import (
 	"sync"
 )
 
+// Copier is the interface that allows you to copy records from the source to target table
 type Copier interface {
 	Copy(readers, writers int) error
 }
 
 type copyService struct {
-	srcTable DynamoDBService
-	trgTable DynamoDBService
-	chans    CopierChans
-	logger   Logger
+	srcTable   DynamoDBService
+	trgTable   DynamoDBService
+	copierChan CopierChan
+	logger     Logger
 }
 
-func NewCopier(srcTableService, trgTableService DynamoDBService, chans CopierChans, logger Logger) Copier {
+// NewCopier returns a new Copier to copy records
+func NewCopier(srcTableService, trgTableService DynamoDBService, copierChan CopierChan, logger Logger) Copier {
 	return copyService{
-		srcTable: srcTableService,
-		trgTable: trgTableService,
-		chans:    chans,
-		logger:   logger,
+		srcTable:   srcTableService,
+		trgTable:   trgTableService,
+		copierChan: copierChan,
+		logger:     logger,
 	}
 }
 
+// Copy will copy all records from the source to target table.
+// This method will create a worker pool according to the number of readers and writes that are passed as argument
 func (service copyService) Copy(readers, writers int) error {
 	service.logger.Printf("copying table with %d readers and %d writers", readers, writers)
-	itemsChan, errChan := service.chans.Items, service.chans.Errors
+	itemsChan, errChan := service.copierChan.Items, service.copierChan.Errors
 
 	wgReaders := &sync.WaitGroup{}
 	wgReaders.Add(readers)
@@ -93,14 +97,15 @@ func (service copyService) write(wg *sync.WaitGroup, itemsChan <-chan []DynamoDB
 	service.logger.Printf("writer wrote a total of %d items", totalWritten)
 }
 
-// CopierChans encapsulates the chan that are used by the copier
-type CopierChans struct {
+// CopierChan encapsulates the value and error channel used by the copier
+type CopierChan struct {
 	Items  chan []DynamoDBItem
 	Errors chan error
 }
 
-func NewCopierChans(itemsChanSize int) CopierChans {
-	return CopierChans{
+// NewCopierChan creates a new CopierChan with a buffered chan []DynamoDBItem of itemsChanSize
+func NewCopierChan(itemsChanSize int) CopierChan {
+	return CopierChan{
 		Items:  make(chan []DynamoDBItem, itemsChanSize),
 		Errors: make(chan error),
 	}
